@@ -51,6 +51,7 @@ script:
   - test -e /usr/bin/sslcertcheck-monit-helper.sh
   - sudo grep 'badssl.com:443:Valid' /var/log/sslcertcheck.log
   - sudo grep 'expired.badssl.com:443:Expired' /var/log/sslcertcheck.log
+  - sudo grep 'root /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt' /etc/cron.d/monit_sslcertcheck
 
 after_failure:
   - ansible-playbook -i tests/inventory tests/$SITE --connection=local --become

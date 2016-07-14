@@ -16,7 +16,7 @@
     group: root
     mode: '0777'
   changed_when: false
-  
+
 - name: Create cronjob
   cron:
     name: 'Check if SSL certificates are still valid'
