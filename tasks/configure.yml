@@ -15,13 +15,14 @@
     owner: root
     group: root
     mode: '0777'
-
+  changed_when: false
+  
 - name: Create cronjob
   cron:
     name: 'Check if SSL certificates are still valid'
     user: root
-    cron_file: ssl_cert_check
+    cron_file: monit_sslcertcheck
     job: '{{ monit_sslcertcheck_cronjob }}'
-    special_time: hourly
+    special_time: daily
     state: present
 

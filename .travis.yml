@@ -65,6 +65,7 @@ after_failure:
   - test -e /var/log/sslcertcheck.log
   - test -e /usr/bin/sslcertcheck-monit-helper.sh
   - sudo grep expired /var/log/sslcertcheck.log
+  - sudo cat /etc/cron.d/monit_sslcertcheck
 
 notifications:
   slack: ambimax:2MlPTX9bY9aPxCPhJGxHKIT6
