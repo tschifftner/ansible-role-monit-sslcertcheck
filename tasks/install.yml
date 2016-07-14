@@ -1,0 +1,17 @@
+---
+
+- name: Install script
+  copy:
+    src: 'ssl-cert-check.sh'
+    dest: '{{ ssl_cert_check_script }}'
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install monit helper
+  copy:
+    src: 'monit-helper.sh'
+    dest: '/usr/bin/sslcertcheck-monit-helper.sh'
+    owner: root
+    group: root
+    mode: '0755'

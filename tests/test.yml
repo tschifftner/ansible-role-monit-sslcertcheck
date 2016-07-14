@@ -1,0 +1,14 @@
+---
+- hosts: localhost
+  become: true
+
+  vars:
+    monit_sslcertcheck_alert_email: 'travis'
+
+    # Variable that contains all hosts to check
+    monit_sslcertcheck_domains:
+      - badssl.com:443
+      - expired.badssl.com:443
+
+  roles:
+    - ansible-role-monit-sslcertcheck

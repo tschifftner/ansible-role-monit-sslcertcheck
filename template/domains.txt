@@ -1,0 +1,3 @@
+{% for domain in monit_sslcertcheck_domains %}
+{{ domain }}
+{% endfor %}

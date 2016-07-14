@@ -1,0 +1,42 @@
+---
+monit_sslcertcheck_alert_email: 'root'
+
+# Variable that contains all hosts to check
+monit_sslcertcheck_domains: []
+#  - www.example.org:443
+#  - www.example.com:567
+
+monit_sslcertcheck_domainfile: '/etc/sslcertcheck.txt'
+
+# Script location
+monit_sslcertcheck_script: '/usr/local/bin/sslcertcheck.sh'
+
+# Log file
+monit_sslcertcheck_logfile: '/var/log/sslcertcheck.log'
+
+# Value when ssl certificate is expiring (days) and information is required; default 10 days
+monit_sslcertcheck_expiring: 10
+
+# Cronjob
+# add parameters only
+#Usage: [ -e email address ] [ -x days ] [-q] [-a] [-b] [-h] [-i] [-n] [-v]
+#       { [ -s common_name ] && [ -p port] } || { [ -f cert_file ] } || { [ -c certificate file ] }
+#
+#  -a                : Send a warning message through E-mail
+#  -b                : Will not print header
+#  -c cert file      : Print the expiration date for the PEM or PKCS12 formatted certificate in cert file
+#  -e E-mail address : E-mail address to send expiration notices
+#  -f cert file      : File with a list of FQDNs and ports
+#  -h                : Print this screen
+#  -i                : Print the issuer of the certificate
+#  -k password       : PKCS12 file password
+#  -n                : Run as a Nagios plugin
+#  -p port           : Port to connect to (interactive mode)
+#  -s commmon name   : Server to connect to (interactive mode)
+#  -t type           : Specify the certificate type
+#  -q                : Don't print anything on the console
+#  -v                : Specify a specific protocol version to use (tls, ssl2, ssl3)
+#  -V                : Only print validation data
+#  -x days           : Certificate expiration interval (eg. if cert_date < days)
+
+monit_sslcertcheck_cronjob: '{{ monit_sslcertcheck_script }} -f {{ monit_sslcertcheck_domainfile }} -a -x {{ monit_sslcertcheck_expiring }} -e {{ monit_sslcertcheck_alert_email }} > {{ monit_sslcertcheck_logfile }}'

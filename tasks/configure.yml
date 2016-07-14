@@ -1,0 +1,19 @@
+---
+
+- name: Save file with all domains
+  template:
+    src: 'domains.txt'
+    dest: '{{ monit_sslcertcheck_domainfile }}'
+    owner: root
+    group: root
+    mode: '0444'
+
+- name: Create cronjob
+  cron:
+    name: 'Check if SSL certificates are still valid'
+    user: root
+    cron_file: ssl_cert_check
+    job: '{{ monit_sslcertcheck_cronjob }}'
+    special_time: hourly
+    state: present
+

@@ -1,0 +1,7 @@
+---
+
+- include: install.yml
+  tags: ['monit-sslcertcheck-install']
+
+- include: configure.yml
+  tags: ['monit-sslcertcheck-configure']
