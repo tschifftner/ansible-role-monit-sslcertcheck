@@ -32,11 +32,12 @@ script:
   - "ansible-playbook -i tests/inventory tests/$SITE --syntax-check"
 
   # Run the role/playbook with ansible-playbook.
-  - "ansible-playbook -i tests/inventory tests/$SITE --connection=local --sudo"
+  - "ansible-playbook -i tests/inventory tests/$SITE --connection=local --become"
+  - ansible-playbook -i tests/inventory tests/$SITE --connection=local --become
 
   # Run the role/playbook again, checking to make sure it's idempotent.
   - >
-    ansible-playbook -i tests/inventory tests/$SITE --connection=local --sudo
+    ansible-playbook -i tests/inventory tests/$SITE --connection=local --become
     | grep -q 'changed=0.*failed=0'
     && (echo 'Idempotence test: pass' && exit 0)
     || (echo 'Idempotence test: fail' && exit 1)
@@ -48,9 +49,11 @@ script:
   - sudo /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt -x 10 > /var/log/sslcertcheck.log
   - test -e /var/log/sslcertcheck.log
   - test -e /usr/bin/sslcertcheck-monit-helper.sh
-  - sudo grep expired /var/log/sslcertcheck.log
+  - sudo grep 'badssl.com:443:Valid' /var/log/sslcertcheck.log
+  - sudo grep 'expired.badssl.com:443:Expired' /var/log/sslcertcheck.log
 
 after_failure:
+  - ansible-playbook -i tests/inventory tests/$SITE --connection=local --become
   - sudo smbstatus
   - cat /etc/samba/smb.conf
   - ansible --version
