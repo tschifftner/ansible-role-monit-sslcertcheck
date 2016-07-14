@@ -3,7 +3,7 @@
 - name: Install script
   copy:
     src: 'ssl-cert-check.sh'
-    dest: '{{ ssl_cert_check_script }}'
+    dest: '{{ monit_sslcertcheck_script }}'
     owner: root
     group: root
     mode: '0755'
