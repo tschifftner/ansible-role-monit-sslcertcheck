@@ -8,6 +8,14 @@
     group: root
     mode: '0444'
 
+- name: Create log file
+  file:
+    path: '{{ monit_sslcertcheck_logfile }}'
+    state: touch
+    owner: root
+    group: root
+    mode: '0777'
+
 - name: Create cronjob
   cron:
     name: 'Check if SSL certificates are still valid'
