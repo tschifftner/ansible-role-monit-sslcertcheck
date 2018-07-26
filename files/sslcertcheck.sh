@@ -1,22 +1,35 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Program: SSL Certificate Check <ssl-cert-check>
 #
-# Source code home: http://prefetch.net/code/ssl-cert-check
+# Source code home: https://github.com/Matty9191/ssl-cert-check
 #
 # Documentation: http://prefetch.net/articles/checkcertificate.html
 #
 # Author: Matty < matty91 at gmail dot com >
 #
-# Current Version: 3.29
+# Current Version: 3.30
 #
 # Revision History:
+#
+# Version 3.31
+#  - Fixed the test for the -servername flag -- Kitson Consulting.
+#
+# Version 3.30
+#  - Use highest returncode for Nagios output -- Marcel Pennewiss
+#  - Set RETCODE to 3 (unknown) if a certificate file does not exist -- Marcel Pennewiss
+#  - Add a "-d" option to specify a directory or file mask pattern -- Marcel Pennewiss
+#  - Add a "-N" option to create summarized Nagios output -- Marcel Pennewiss
+#  - Cleaned up many formatting -- Marcel Pennewiss
+#
+# Versione 3.29a
+#  - Added option to specify email sender address
 #
 # Version 3.29
 #  - Add the openssl -servername flag if it shows up in help.
 #
 # Version 3.28
-#  - Added  a DEBUG option to assist with debugging folks who use the script
+#  - Added a DEBUG option to assist with debugging folks who use the script
 #
 # Version 3.27
 #  - Allow white spaces to exist in the certificate file list
@@ -166,7 +179,7 @@
 #  Version 1.0
 #      Initial Release
 #
-# Last Updated: 01-05-2016
+# Last Updated: 12-12-2016
 #
 # Purpose:
 #  ssl-cert-check checks to see if a digital certificate in X.509 format
@@ -198,6 +211,7 @@
 #  -- FreeBSD using /bin/sh
 #  -- Centos Linux 3, 4, 5 & 6 using /bin/bash
 #  -- Redhat Enterprise Linux 3, 4, 5 & 6 using /bin/bash
+#  -- Gentoo using /bin/bash
 #
 # Usage:
 #  Refer to the usage() sub-routine, or invoke ssl-cert-check
@@ -213,7 +227,10 @@ export PATH
 # Who to page when an expired certificate is detected (cmdline: -e)
 ADMIN="root"
 
-# Number of days in the warning threshhold  (cmdline: -x)
+# Email sender address for alarm notifications
+SENDER="postmaster@localhost.localdomain"
+
+# Number of days in the warning threshhold (cmdline: -x)
 WARNDAYS=30
 
 # If QUIET is set to TRUE, don't print anything on the console (cmdline: -q)
@@ -224,6 +241,9 @@ ALARM="FALSE"
 
 # Don't run as a Nagios plugin by default (cmdline: -n)
 NAGIOS="FALSE"
+
+# Don't summarize Nagios output by default (cmdline: -N)
+NAGIOSSUMMARY="FALSE"
 
 # NULL out the PKCSDBPASSWD variable for later use (cmdline: -k)
 PKCSDBPASSWD=""
@@ -245,32 +265,83 @@ OPENSSL=$(which openssl)
 PRINTF=$(which printf)
 SED=$(which sed)
 MKTEMP=$(which mktemp)
+FIND=$(which find)
 
 # Try to find a mail client
 if [ -f /usr/bin/mailx ]
 then
     MAIL="/usr/bin/mailx"
+    MAILMODE="mailx"
 elif [ -f /bin/mail ]
 then
     MAIL="/bin/mail"
+    MAILMODE="mail"
 elif [ -f /usr/bin/mail ]
 then
     MAIL="/usr/bin/mail"
+    MAILMODE="mail"
 elif [ -f /sbin/mail ]
 then
     MAIL="/sbin/mail"
+    MAILMODE="mail"
 elif [ -f /usr/sbin/mail ]
 then
     MAIL="/usr/sbin/mail"
+    MAILMODE="mail"
+elif [ -f /usr/sbin/sendmail ]
+then
+    MAIL="/usr/sbin/sendmail"
+    MAILMODE="sendmail"
 else
     MAIL="cantfindit"
+    MAILMODE="cantfindit"
 fi
 
 # Return code used by nagios. Initialize to 0.
 RETCODE=0
 
+# Certificate counters and minimum difference. Initialize to 0.
+SUMMARY_VALID=0
+SUMMARY_WILL_EXPIRE=0
+SUMMARY_EXPIRED=0
+SUMMARY_MIN_DIFF=0
+SUMMARY_MIN_DATE=
+SUMMARY_MIN_HOST=
+SUMMARY_MIN_PORT=
+
 # Set the default umask to be somewhat restrictive
 umask 077
+
+
+#####################################################
+### Send email
+### Accepts three parameters:
+###  $1 -> sender email address
+###  $2 -> email to send mail
+###  $3 -> Subject
+###  $4 -> Message
+#####################################################
+send_mail() {
+
+    FROM=${1}
+    TO=${2}
+    SUBJECT=${3}
+    MSG=${4}
+
+    case "${MAILMODE}" in
+        "mail" | "mailx")
+            echo "$MSG" | ${MAIL} -r $FROM -s "$SUBJECT" $TO
+            ;;
+        "sendmail")
+            (echo "Subject:$SUBJECT" && echo "TO:$TO" && echo "FROM:$FROM" && echo "$MSG") | ${MAIL} $TO
+            ;;
+        "*")
+            echo "ERROR: You enabled automated alerts, but the mail binary could not be found."
+            echo "FIX: Please modify the ${MAIL} and ${$MAILMODE} variable in the program header."
+            exit 1
+            ;;
+    esac
+}
 
 #############################################################################
 # Purpose: Convert a date from MONTH-DAY-YEAR to Julian format
@@ -284,7 +355,7 @@ umask 077
 #############################################################################
 date2julian() {
 
-    if [ "${1}" != "" ] && [ "${2}" != ""  ] && [ "${3}" != "" ]
+    if [ "${1}" != "" ] && [ "${2}" != "" ] && [ "${3}" != "" ]
     then
         ## Since leap years add aday at the end of February,
         ## calculations are done from 1 March 0000 (a fictional year)
@@ -323,7 +394,7 @@ getmonth()
         Oct) echo 10 ;;
         Nov) echo 11 ;;
         Dec) echo 12 ;;
-          *) echo  0 ;;
+          *) echo 0 ;;
     esac
 }
 
@@ -335,7 +406,7 @@ getmonth()
 #############################################################################
 date_diff()
 {
-    if [ "${1}" != "" ] &&  [ "${2}" != "" ]
+    if [ "${1}" != "" ] && [ "${2}" != "" ]
     then
         echo $((${2} - ${1}))
     else
@@ -355,6 +426,11 @@ date_diff()
 #####################################################################
 prints()
 {
+    if [ "${NAGIOSSUMMARY}" == "TRUE" ]
+    then
+        return
+    fi
+
     if [ "${QUIET}" != "TRUE" ] && [ "${ISSUER}" = "TRUE" ] && [ "${VALIDATION}" != "TRUE" ]
     then
         MIN_DATE=$(echo $4 | ${AWK} '{ print $1, $2, $4 }')
@@ -393,29 +469,100 @@ print_heading()
 {
     if [ "${NOHEADER}" != "TRUE" ]
     then
-       if [ "${QUIET}" != "TRUE" ] && [ "${ISSUER}" = "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" != "TRUE" ]
-       then
-           ${PRINTF} "\n%-35s %-17s %-8s %-11s %-4s\n" "Host" "Issuer" "Status" "Expires" "Days"
-           echo "----------------------------------- ----------------- -------- ----------- ----"
+        if [ "${QUIET}" != "TRUE" ] && [ "${ISSUER}" = "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" != "TRUE" ]
+        then
+            ${PRINTF} "\n%-35s %-17s %-8s %-11s %-4s\n" "Host" "Issuer" "Status" "Expires" "Days"
+            echo "----------------------------------- ----------------- -------- ----------- ----"
 
-       elif [ "${QUIET}" != "TRUE" ] && [ "${ISSUER}" = "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" == "TRUE" ]
-       then
-           ${PRINTF} "\n%-35s %-35s %-32s %-17s\n" "Host" "Common Name" "Serial #" "Issuer"
-           echo "----------------------------------- ----------------------------------- -------------------------------- -----------------"
+        elif [ "${QUIET}" != "TRUE" ] && [ "${ISSUER}" = "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" == "TRUE" ]
+        then
+            ${PRINTF} "\n%-35s %-35s %-32s %-17s\n" "Host" "Common Name" "Serial #" "Issuer"
+            echo "----------------------------------- ----------------------------------- -------------------------------- -----------------"
 
-       elif [ "${QUIET}" != "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" != "TRUE" ]
-       then
-           ${PRINTF} "\n%-47s %-12s %-12s %-4s\n" "Host" "Status" "Expires" "Days"
-           echo "----------------------------------------------- ------------ ------------ ----"
+        elif [ "${QUIET}" != "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" != "TRUE" ]
+        then
+            ${PRINTF} "\n%-47s %-12s %-12s %-4s\n" "Host" "Status" "Expires" "Days"
+            echo "----------------------------------------------- ------------ ------------ ----"
 
-       elif [ "${QUIET}" != "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" == "TRUE" ]
-       then
-           ${PRINTF} "\n%-35s %-35s %-32s\n" "Host" "Common Name" "Serial #"
-           echo "----------------------------------- ----------------------------------- --------------------------------"
+        elif [ "${QUIET}" != "TRUE" ] && [ "${NAGIOS}" != "TRUE" ] && [ "${VALIDATION}" == "TRUE" ]
+        then
+            ${PRINTF} "\n%-35s %-35s %-32s\n" "Host" "Common Name" "Serial #"
+            echo "----------------------------------- ----------------------------------- --------------------------------"
         fi
     fi
 }
 
+####################################################
+# Purpose: Print a summary for nagios
+# Arguments:
+#   None
+####################################################
+print_summary()
+{
+    if [ "${NAGIOSSUMMARY}" != "TRUE" ]
+    then
+        return
+    fi
+
+    if [ ${SUMMARY_WILL_EXPIRE} -eq 0 ] && [ ${SUMMARY_EXPIRED} -eq 0 ]
+    then
+        ${PRINTF} "%s valid certificate(s)|days=%s\n" "${SUMMARY_VALID}" "${SUMMARY_MIN_DIFF}"
+
+    elif [ ${SUMMARY_EXPIRED} -ne 0 ]
+    then
+        ${PRINTF} "%s certificate(s) expired (%s:%s on %s)|days=%s\n" "${SUMMARY_EXPIRED}" "${SUMMARY_MIN_HOST}" "${SUMMARY_MIN_PORT}" "${SUMMARY_MIN_DATE}" "${SUMMARY_MIN_DIFF}"
+
+    elif [ ${SUMMARY_WILL_EXPIRE} -ne 0 ]
+    then
+        ${PRINTF} "%s certificate(s) will expire (%s:%s on %s)|days=%s\n" "${SUMMARY_WILL_EXPIRE}" "${SUMMARY_MIN_HOST}" "${SUMMARY_MIN_PORT}" "${SUMMARY_MIN_DATE}" "${SUMMARY_MIN_DIFF}"
+
+    fi
+}
+
+#############################################################
+# Purpose: Set returncode to value if current value is lower
+# Arguments:
+#   $1 -> New returncorde
+#############################################################
+set_returncode()
+{
+    if [ ${RETCODE} -lt ${1} ]
+    then
+        RETCODE=${1}
+    fi
+}
+
+########################################################################
+# Purpose: Set certificate counters and informations for nagios summary
+# Arguments:
+#   $1 -> Status of certificate (0: valid, 1: will expire, 2: expired)
+#   $2 -> Hostname
+#   $3 -> TCP Port
+#   $4 -> Date when certificate will expire
+#   $5 -> Days left until the certificate will expire
+########################################################################
+set_summary()
+{
+    if [ ${1} -eq 0 ]
+    then
+        SUMMARY_VALID=$((SUMMARY_VALID+1))
+
+    elif [ ${1} -eq 1 ]
+    then
+        SUMMARY_WILL_EXPIRE=$((SUMMARY_WILL_EXPIRE+1))
+
+    else
+        SUMMARY_EXPIRED=$((SUMMARY_EXPIRED+1))
+    fi
+
+    if [ ${5} -lt ${SUMMARY_MIN_DIFF} ] || [ ${SUMMARY_MIN_DIFF} -eq 0 ]
+    then
+        SUMMARY_MIN_DATE=${4}
+        SUMMARY_MIN_DIFF=${5}
+        SUMMARY_MIN_HOST=${2}
+        SUMMARY_MIN_PORT=${3}
+    fi
+}
 
 ##########################################
 # Purpose: Describe how the script works
@@ -424,18 +571,21 @@ print_heading()
 ##########################################
 usage()
 {
-    echo "Usage: $0 [ -e email address ] [ -x days ] [-q] [-a] [-b] [-h] [-i] [-n] [-v]"
-    echo "       { [ -s common_name ] && [ -p port] } || { [ -f cert_file ] } || { [ -c certificate file ] }"
+    echo "Usage: $0 [ -e email address ] [-E sender email address] [ -x days ] [-q] [-a] [-b] [-h] [-i] [-n] [-N] [-v]"
+    echo "       { [ -s common_name ] && [ -p port] } || { [ -f cert_file ] } || { [ -c cert file ] } || { [ -d cert dir ] }"
     echo ""
     echo "  -a                : Send a warning message through E-mail"
     echo "  -b                : Will not print header"
     echo "  -c cert file      : Print the expiration date for the PEM or PKCS12 formatted certificate in cert file"
+    echo "  -d cert directory : Print the expiration date for the PEM or PKCS12 formatted certificates in cert directory"
     echo "  -e E-mail address : E-mail address to send expiration notices"
+    echo "  -E E-mail sender  : E-mail address of the sender"
     echo "  -f cert file      : File with a list of FQDNs and ports"
     echo "  -h                : Print this screen"
     echo "  -i                : Print the issuer of the certificate"
     echo "  -k password       : PKCS12 file password"
     echo "  -n                : Run as a Nagios plugin"
+    echo "  -N                : Run as a Nagios plugin and output one line summary (implies -n, requires -f or -d)"
     echo "  -p port           : Port to connect to (interactive mode)"
     echo "  -s commmon name   : Server to connect to (interactive mode)"
     echo "  -t type           : Specify the certificate type"
@@ -489,37 +639,37 @@ check_server_status() {
          TLSFLAG="${TLSFLAG} -servername $1"
     fi
 
-    echo "" | ${OPENSSL} s_client ${VER} -connect ${1}:${2} ${TLSFLAG} 2> ${ERROR_TMP} 1> ${CERT_TMP}
+    echo "" | ${OPENSSL} s_client -crlf ${VER} -connect ${1}:${2} ${TLSFLAG} 2> ${ERROR_TMP} 1> ${CERT_TMP}
 
-    if ${GREP} -i  "Connection refused" ${ERROR_TMP} > /dev/null
+    if ${GREP} -i "Connection refused" ${ERROR_TMP} > /dev/null
     then
         prints ${1} ${2} "Connection refused" "Unknown"
-        RETCODE=3
+        set_returncode 3
 
     elif ${GREP} -i "No route to host" ${ERROR_TMP} > /dev/null
     then
         prints ${1} ${2} "No route to host" "Unknown"
-        RETCODE=3
+        set_returncode 3
 
     elif ${GREP} -i "gethostbyname failure" ${ERROR_TMP} > /dev/null
     then
         prints ${1} ${2} "Cannot resolve domain" "Unknown"
-        RETCODE=3
+        set_returncode 3
 
     elif ${GREP} -i "Operation timed out" ${ERROR_TMP} > /dev/null
     then
         prints ${1} ${2} "Operation timed out" "Unknown"
-        RETCODE=3
+        set_returncode 3
 
     elif ${GREP} -i "ssl handshake failure" ${ERROR_TMP} > /dev/null
     then
         prints ${1} ${2} "SSL handshake failed" "Unknown"
-        RETCODE=3
+        set_returncode 3
 
     elif ${GREP} -i "connect: Connection timed out" ${ERROR_TMP} > /dev/null
     then
         prints ${1} ${2} "Connection timed out" "Unknown"
-        RETCODE=3
+        set_returncode 3
 
     else
         check_file_status ${CERT_TMP} $1 $2
@@ -544,7 +694,7 @@ check_file_status() {
     then
         echo "ERROR: The file named ${CERTFILE} is unreadable or doesn't exist"
         echo "ERROR: Please check to make sure the certificate for ${HOST}:${PORT} is valid"
-        RETCODE=1
+        set_returncode 3
         return
     fi
 
@@ -562,15 +712,15 @@ check_file_status() {
 
         # Extract the issuer from the certificate
         CERTISSUER=$(${OPENSSL} x509 -in ${CERT_TMP} -issuer -noout | \
-                    ${AWK} 'BEGIN {RS="/" } $0 ~ /^O=/ \
-                                  { print substr($0,3,17)}')
+                   ${AWK} 'BEGIN {RS="/" } $0 ~ /^O=/ \
+                                 { print substr($0,3,17)}')
 
         ### Grab the common name (CN) from the X.509 certificate
         COMMONNAME=$(${OPENSSL} x509 -in ${CERT_TMP} -subject -noout | \
                    ${SED} -e 's/.*CN=//' | \
-				   ${SED} -e 's/\/.*//')
+                   ${SED} -e 's/\/.*//')
 
-	### Grab the serial number from the X.509 certificate
+        ### Grab the serial number from the X.509 certificate
         SERIAL=$(${OPENSSL} x509 -in ${CERT_TMP} -serial -noout | \
                    ${SED} -e 's/serial=//')
     else
@@ -585,8 +735,9 @@ check_file_status() {
         ### Grab the common name (CN) from the X.509 certificate
         COMMONNAME=$(${OPENSSL} x509 -in ${CERTFILE} -subject -noout -inform ${CERTTYPE} | \
                    ${SED} -e 's/.*CN=//' | \
-				   ${SED} -e 's/\/.*//')
-	### Grab the serial number from the X.509 certificate
+                   ${SED} -e 's/\/.*//')
+
+        ### Grab the serial number from the X.509 certificate
         SERIAL=$(${OPENSSL} x509 -in ${CERTFILE} -serial -noout -inform ${CERTTYPE} | \
                    ${SED} -e 's/serial=//')
     fi
@@ -603,46 +754,54 @@ check_file_status() {
     then
         if [ "${ALARM}" = "TRUE" ]
         then
-            echo "The SSL certificate for ${HOST} \"(CN: ${COMMONNAME})\" has expired!" \
-                 | ${MAIL} -s "Certificate for ${HOST} \"(CN: ${COMMONNAME})\" has expired!" ${ADMIN}
+            send_mail ${SENDER} ${ADMIN} "Certificate for ${HOST} \"(CN: ${COMMONNAME})\" has expired!" \
+                "The SSL certificate for ${HOST} \"(CN: ${COMMONNAME})\" has expired!"
         fi
 
         prints ${HOST} ${PORT} "Expired" "${CERTDATE}" "${CERTDIFF}" "${CERTISSUER}" "${COMMONNAME}" "${SERIAL}"
-        RETCODE=2
+        RETCODE_LOCAL=2
 
     elif [ ${CERTDIFF} -lt ${WARNDAYS} ]
     then
         if [ "${ALARM}" = "TRUE" ]
         then
-            echo "The SSL certificate for ${HOST} \"(CN: ${COMMONNAME})\" will expire on ${CERTDATE}" \
-                 | ${MAIL} -s "Certificate for ${HOST} \"(CN: ${COMMONNAME})\" will expire in ${WARNDAYS}-days or less" ${ADMIN}
+            send_mail ${SENDER} ${ADMIN} "Certificate for ${HOST} \"(CN: ${COMMONNAME})\" will expire in ${WARNDAYS}-days or less" \
+                "The SSL certificate for ${HOST} \"(CN: ${COMMONNAME})\" will expire on ${CERTDATE}"
         fi
         prints ${HOST} ${PORT} "Expiring" "${CERTDATE}" "${CERTDIFF}" "${CERTISSUER}" "${COMMONNAME}" "${SERIAL}"
-        RETCODE=1
+        RETCODE_LOCAL=1
 
     else
         prints ${HOST} ${PORT} "Valid" "${CERTDATE}" "${CERTDIFF}" "${CERTISSUER}" "${COMMONNAME}" "${SERIAL}"
-        RETCODE=0
+        RETCODE_LOCAL=0
     fi
+
+    set_returncode ${RETCODE_LOCAL}
+    MIN_DATE=$(echo ${CERTDATE} | ${AWK} '{ print $1, $2, $4 }')
+    set_summary ${RETCODE_LOCAL} ${HOST} ${PORT} "${MIN_DATE}" ${CERTDIFF}
 }
 
 #################################
 ### Start of main program
 #################################
-while getopts abinv:e:f:c:hk:p:s:t:qx:V option
+while getopts abinNv:e:E:f:c:d:hk:p:s:t:qx:V option
 do
     case "${option}"
     in
         a) ALARM="TRUE";;
         b) NOHEADER="TRUE";;
         c) CERTFILE=${OPTARG};;
+        d) CERTDIRECTORY=${OPTARG};;
         e) ADMIN=${OPTARG};;
+	E) SENDER=${OPTARG};;
         f) SERVERFILE=$OPTARG;;
         h) usage
            exit 1;;
         i) ISSUER="TRUE";;
         k) PKCSDBPASSWD=${OPTARG};;
         n) NAGIOS="TRUE";;
+        N) NAGIOS="TRUE"
+           NAGIOSSUMMARY="TRUE";;
         p) PORT=$OPTARG;;
         s) HOST=$OPTARG;;
         t) CERTTYPE=$OPTARG;;
@@ -671,11 +830,11 @@ then
     exit 1
 fi
 
-### Check to make sure a grep utility is available
-if [ ! -f ${GREP} ]
+### Check to make sure a grep and find utility is available
+if [ ! -f ${GREP} ] || [ ! -f ${FIND} ]
 then
-    echo "ERROR: The grep binary does not exist in ${GREP} ."
-    echo "FIX: Please modify the \${GREP} variable in the program header."
+    echo "ERROR: Unable to locate the greb and find binary."
+    echo "FIX: Please modify the \${GREP} and \${FIND} variables in the program header."
     exit 1
 fi
 
@@ -704,7 +863,7 @@ then
 fi
 
 # Send along the servername when TLS is used
-if ${OPENSSL} s_client -h 2>&1 | grep '-servername' > /dev/null
+if ${OPENSSL} s_client -help 2>&1 | grep '-servername' > /dev/null
 then
     TLSSERVERNAME="TRUE"
 else
@@ -712,8 +871,13 @@ else
 fi
 
 # Place to stash temporary files
-CERT_TMP=$($MKTEMP  /var/tmp/cert.XXXXXX)
-ERROR_TMP=$($MKTEMP /var/tmp/error.XXXXXX)
+CERT_TMP=$($MKTEMP /tmp/cert.XXXXXX)
+ERROR_TMP=$($MKTEMP /tmp/error.XXXXXX)
+
+cleanup() {
+  [ $DEBUG == 1 ] || rm -f ${CERT_TMP} ${ERROR_TMP}
+}
+trap cleanup EXIT INT TERM QUIT
 
 ### Baseline the dates so we have something to compare to
 MONTH=$(${DATE} "+%m")
@@ -736,6 +900,7 @@ if [ "${HOST}" != "" ] && [ "${PORT}" != "" ]
 then
     print_heading
     check_server_status "${HOST}" "${PORT}"
+    print_summary
 
 ### If a file is passed to the "-f" option on the command line, check
 ### each certificate or server / port combination in the file to see if
@@ -743,8 +908,13 @@ then
 elif [ -f "${SERVERFILE}" ]
 then
     print_heading
-    egrep -v '(^#|^$)' ${SERVERFILE} |  while read HOST PORT
+
+    IFS=$'\n'
+    for LINE in `egrep -v '(^#|^$)' ${SERVERFILE}`
     do
+        HOST=${LINE%% *}
+        PORT=${LINE#* }
+        IFS=" "
         if [ "$PORT" = "FILE" ]
         then
             check_file_status ${HOST} "FILE" "${HOST}"
@@ -752,12 +922,24 @@ then
             check_server_status "${HOST}" "${PORT}"
         fi
     done
+    IFS=${OLDIFS}
+    print_summary
 
 ### Check to see if the certificate in CERTFILE is about to expire
 elif [ "${CERTFILE}" != "" ]
 then
     print_heading
-    check_file_status ${CERTFILE} "FILE"  "${CERTFILE}"
+    check_file_status ${CERTFILE} "FILE" "${CERTFILE}"
+    print_summary
+
+### Check to see if the certificates in CERTDIRECTORY are about to expire
+elif [ "${CERTDIRECTORY}" != "" ] && (${FIND} -L ${CERTDIRECTORY} -type f > /dev/null 2>&1)
+then
+    print_heading
+    for FILE in `${FIND} -L ${CERTDIRECTORY} -type f`; do
+        check_file_status ${FILE} "FILE" "${FILE}"
+    done
+    print_summary
 
 ### There was an error, so print a detailed usage message and exit
 else
@@ -777,7 +959,8 @@ fi
 rm -f ${CERT_TMP} ${ERROR_TMP}
 
 ### Exit with a success indicator
-if [ "${NAGIOS}" = "TRUE" ]; then
+if [ "${NAGIOS}" = "TRUE" ]
+then
     exit $RETCODE
 else
     exit 0

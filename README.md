@@ -1,6 +1,6 @@
 # Ansible Role: Install monit-sslcertcheck
 
-[![Build Status](https://travis-ci.org/tschifftner/ansible-role-monit-sslcertcheck.svg)](https://travis-ci.org/tschifftner/ansible-role-monit-sslcertcheck)
+[![Build Status](https://travis-ci.org/tschifftner/ansible-role-monit-sslcertcheck.svg?branch=master)](https://travis-ci.org/tschifftner/ansible-role-monit-sslcertcheck)
 
 Installs monit-sslcertcheck on Debian/Ubuntu linux servers.
 
@@ -50,8 +50,8 @@ monit_group_services:
 
 ```
 monit_sslcertcheck_domains:
-  - badssl.com:443
-  - expired.badssl.com:443
+  - badssl.com 443
+  - expired.badssl.com 443
 ```
 
 ## Dependencies
@@ -71,10 +71,15 @@ $ ansible-galaxy install tschifftner.monit-sslcertcheck
         - { role: tschifftner.monit-sslcertcheck }
 
 ## Supported OS
-## Supported OS
-Ansible          | Debian Jessie    | Ubuntu 14.04    | Ubuntu 12.04
-:--------------: | :--------------: | :-------------: | :-------------: 
-2.1              | Yes              | Yes             | Yes
+
+ - Debian 9 (Stretch)
+ - Debian 8 (Jessie)
+ - Ubuntu 18.04 (Bionic Beaver)
+ - Ubuntu 16.04 (Xenial Xerus)
+ 
+## Required ansible version
+
+Ansible 2.5+
 
 ## License
 
