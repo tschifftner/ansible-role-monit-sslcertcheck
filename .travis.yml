@@ -1,72 +1,53 @@
 ---
-sudo: required
-dist: trusty
-
-language: python
-python: "2.7"
+services: docker
 
 env:
-  - SITE=test.yml ANSIBLE_VERSION=latest
-  - SITE=test.yml ANSIBLE_VERSION=2.1.0.0
+#  - distro: centos7
+#  - distro: centos6
+#  - distro: fedora27
+#  - distro: ubuntu1604
+#  - distro: ubuntu1404
+#  - distro: ubuntu1204
 
-branches:
-  only:
-    - master
-
-before_install:
-  - sudo apt-get update -qq
-  - sudo apt-get install -y curl
-
-install:
-  # Install Ansible.
-  - if [ "$ANSIBLE_VERSION" = "latest" ]; then pip install --no-binary ansible ansible; else pip install --no-binary ansible ansible==$ANSIBLE_VERSION; fi
-
-  # Add ansible.cfg to pick up roles path.
-  - "{ echo '[defaults]'; echo 'roles_path = ../'; } >> ansible.cfg"
-
-  # Install ansible-lint
-  - pip install ansible-lint
+  - distro: debian9
+  - distro: debian8
+  - distro: ubuntu1804
+  - distro: ubuntu1604
 
 script:
-  # Check the role/playbook's syntax.
-  - "ansible-playbook -i tests/inventory tests/$SITE --syntax-check"
+  # Configure test script so we can run extra tests after playbook is run.
+  - export container_id=$(date +%s)
+  - export cleanup=false
+  - export DOCKER="docker exec --tty ${container_id} env TERM=xterm"
 
-  # Run the role/playbook with ansible-playbook.
-  - "ansible-playbook -i tests/inventory tests/$SITE --connection=local --become"
-  - ansible-playbook -i tests/inventory tests/$SITE --connection=local --become
+  # Download test shim.
+  - wget -O ${PWD}/tests/test.sh https://gist.githubusercontent.com/tschifftner/4078cf2a8429d967d5e100649ff2caa9/raw/
+  - chmod +x ${PWD}/tests/test.sh
 
-  # Run the role/playbook again, checking to make sure it's idempotent.
-  - >
-    ansible-playbook -i tests/inventory tests/$SITE --connection=local --become
-    | grep -q 'changed=0.*failed=0'
-    && (echo 'Idempotence test: pass' && exit 0)
-    || (echo 'Idempotence test: fail' && exit 1)
+  # Run tests.
+  - ${PWD}/tests/test.sh
 
-  # ansible-lint checks for best practice
-  - ansible-lint tests/$SITE
+  - ${DOCKER} test -e /usr/local/bin/sslcertcheck.sh
+  - ${DOCKER} test -e /etc/sslcertcheck.txt
+  - ${DOCKER} /etc/ansible/roles/role_under_test/tests/run-test.sh
+  - ${DOCKER} test -e /var/log/sslcertcheck.log
+  - ${DOCKER} test -e /usr/bin/sslcertcheck-monit-helper.sh
+  - ${DOCKER} grep 'badssl.com:443:Valid' /var/log/sslcertcheck.log
+  - ${DOCKER} grep 'expired.badssl.com:443:Expired' /var/log/sslcertcheck.log
+  - ${DOCKER} grep 'root /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt' /etc/cron.d/monit_sslcertcheck
 
-  - test -e /usr/local/bin/sslcertcheck.sh
-  - sudo /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt -x 10 > /var/log/sslcertcheck.log
-  - test -e /var/log/sslcertcheck.log
-  - test -e /usr/bin/sslcertcheck-monit-helper.sh
-  - sudo grep 'badssl.com:443:Valid' /var/log/sslcertcheck.log
-  - sudo grep 'expired.badssl.com:443:Expired' /var/log/sslcertcheck.log
-  - sudo grep 'root /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt' /etc/cron.d/monit_sslcertcheck
 
 after_failure:
-  - ansible-playbook -i tests/inventory tests/$SITE --connection=local --become
-  - sudo smbstatus
-  - cat /etc/samba/smb.conf
-  - ansible --version
-  - cat /var/log/sslcertcheck.log
-  - cat /etc/sslcertcheck.txt
-  - test -e /usr/local/bin/sslcertcheck.sh
-  - sudo /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt -x 10
-  - sudo /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt -x 10 > /var/log/sslcertcheck.log
-  - test -e /var/log/sslcertcheck.log
-  - test -e /usr/bin/sslcertcheck-monit-helper.sh
-  - sudo grep expired /var/log/sslcertcheck.log
-  - sudo cat /etc/cron.d/monit_sslcertcheck
+  - ${DOCKER} cat /var/log/sslcertcheck.log
+  - ${DOCKER} cat /etc/sslcertcheck.txt
+  - ${DOCKER} test -e /usr/local/bin/sslcertcheck.sh
+  - ${DOCKER} /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt -x 10
+  - ${DOCKER} /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt -x 10 > /var/log/sslcertcheck.log
+  - ${DOCKER} test -e /var/log/sslcertcheck.log
+  - ${DOCKER} test -e /usr/bin/sslcertcheck-monit-helper.sh
+  - ${DOCKER} grep expired /var/log/sslcertcheck.log
+  - ${DOCKER} cat /etc/cron.d/monit_sslcertcheck
+
 
 notifications:
   slack: ambimax:2MlPTX9bY9aPxCPhJGxHKIT6
