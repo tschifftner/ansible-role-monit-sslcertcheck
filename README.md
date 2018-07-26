@@ -50,8 +50,8 @@ monit_group_services:
 
 ```
 monit_sslcertcheck_domains:
-  - badssl.com:443
-  - expired.badssl.com:443
+  - badssl.com 443
+  - expired.badssl.com 443
 ```
 
 ## Dependencies

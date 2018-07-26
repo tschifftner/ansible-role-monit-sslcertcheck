@@ -32,8 +32,8 @@ script:
   - ${DOCKER} /etc/ansible/roles/role_under_test/tests/run-test.sh
   - ${DOCKER} test -e /var/log/sslcertcheck.log
   - ${DOCKER} test -e /usr/bin/sslcertcheck-monit-helper.sh
-  - ${DOCKER} grep 'badssl.com:443:Valid' /var/log/sslcertcheck.log
-  - ${DOCKER} grep 'expired.badssl.com:443:Expired' /var/log/sslcertcheck.log
+  - ${DOCKER} grep -E 'badssl.com:443\s+Valid' /var/log/sslcertcheck.log
+  - ${DOCKER} grep -E 'expired.badssl.com:443\s+Expired' /var/log/sslcertcheck.log
   - ${DOCKER} grep 'root /usr/local/bin/sslcertcheck.sh -f /etc/sslcertcheck.txt' /etc/cron.d/monit_sslcertcheck
 
 
